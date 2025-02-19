@@ -26,7 +26,7 @@
         @mouseleave="endAction"
         :style="{ cursor: cursorStyle }"
       ></canvas>
-      <el-tag v-for="tag in label" :key="tag" closable size="small" :style="{
+      <el-tag v-for="(tag, index) in label" @close="handleRemove(index)" :key="tag.startY" closable size="small" :style="{
           top: `${tag.startY * markScale + imagePosition.y - 20}px`,
           left: `${tag.startX * markScale + imagePosition.x + 35}px`,
         }">
@@ -144,6 +144,14 @@ export default {
       this.canvasHeight = this.img.height * this.scale; // 按宽度缩放
       this.canvasWidth = this.img.width * this.scale; // 按宽度缩放
       this.drawImage(); // 更新画布
+      this.$nextTick(() => {
+        this.drawLabels(); // 绘制标签信息
+      });
+    },
+    // 移除标签
+    handleRemove(index) {
+      this.label.splice(index, 1);
+      this.drawImage(); // 重新绘制
       this.$nextTick(() => {
         this.drawLabels(); // 绘制标签信息
       });
@@ -350,32 +358,11 @@ export default {
     },
     // 完成绘制或移动
     endAction(event) {
-      console.log(this.currentRect);
       if (this.isDrawing) {
-        // 当currentRect的宽高都为0时，说明为点击操作
-        // if (this.currentRect.width === 0 && this.currentRect.height === 0) {
-        //   const canvas = this.$refs.canvas;
-        //   const ctx = canvas.getContext("2d");
-        //   const rect = canvas.getBoundingClientRect();
-        //   const mouseX = event.clientX - rect.left;
-        //   const mouseY = event.clientY - rect.top;
-        //   this.label.forEach((t) => {
-        //     const textWidth = ctx.measureText(t.text).width;
-        //     if (
-        //       mouseX >= t.startX * this.markScale &&
-        //       mouseX <= t.startX * this.markScale + textWidth &&
-        //       mouseY <= t.startY * this.markScale &&
-        //       mouseY >= t.startY * this.markScale - 30
-        //     ) {
-        //       alert(`${t.text} clicked!`);
-        //     }
-        //   });
-        // } else {
         this.showMakerInput = true;
         this.markLeft = event.offsetX + 39;
         this.markTop = event.offsetY;
         this.rectangles.push(this.currentRect); // 保存矩形
-        // }
         this.isDrawing = false;
       }
       if (this.isMoving) {
