@@ -1,12 +1,19 @@
 <template>
   <div class="container">
     <div class="controls">
-      <button @click="setMode('draw')">标注</button>
-      <button @click="setMode('move')">抓手</button>
-      <button @click="saveImage">保存图片</button>
+      <el-button
+        @click="setMode('draw')"
+        :type="mode == 'draw' ? 'primary' : ''"
+        >标注</el-button
+      >
+      <el-button
+        @click="setMode('move')"
+        :type="mode == 'move' ? 'primary' : ''"
+        >抓手</el-button
+      >
+      <el-button @click="saveImage">保存图片</el-button>
       <div>当前缩放: {{ (scale * 100).toFixed(0) }}%</div>
     </div>
-
     <div class="image-container" ref="imageContainer" @wheel="zoomImage">
       <canvas
         ref="canvas"
@@ -19,6 +26,35 @@
         @mouseleave="endAction"
         :style="{ cursor: cursorStyle }"
       ></canvas>
+      <el-tag v-for="tag in label" :key="tag" closable size="small" :style="{
+          top: `${tag.startY * markScale + imagePosition.y - 20}px`,
+          left: `${tag.startX * markScale + imagePosition.x + 35}px`,
+        }">
+        {{ tag.text }}
+      </el-tag>
+      <el-card
+        class="tipInfo"
+        v-if="showMakerInput"
+        :style="{
+          top: markTop + 'px',
+          left: markLeft + 'px',
+        }"
+      >
+        <div class="contentBox">
+          <el-input
+            placeholder="请输入内容"
+            v-model="makeName"
+            size="mini"
+            clearable
+          >
+            <template slot="prepend">害虫名称</template>
+          </el-input>
+          <el-button type="primary" size="mini" @click="confirmAdd"
+            >确定</el-button
+          >
+          <el-button size="mini" @click="cancelAdd">取消</el-button>
+        </div>
+      </el-card>
     </div>
   </div>
 </template>
@@ -27,10 +63,17 @@
 export default {
   data() {
     return {
-      label: '[{\"text\":\"金龟子\",\"startX\":620,\"startY\":340,\"width\":141,\"height\":115},{\"text\":\"夜蛾\",\"startX\":488,\"startY\":495,\"width\":115,\"height\":116}]',
+      label:
+        '[{"text":"金龟子","startX":620,"startY":340,"width":141,"height":115},{"text":"夜蛾","startX":488,"startY":495,"width":115,"height":116}]',
       imageUrl:
-        "http://bigdata-image.oss-accelerate.aliyuncs.com/Basics/cbd/861551053998357/2023/11/2/192.168.1.108_01_20231102040112786_ALARM_INPUT.jpg",
+        "http://bigdata-image.oss-accelerate.aliyuncs.com/Basics/cbd/861551053998357/2023/11/2/192.168.1.108_01_20231102025510657_ALARM_INPUT.jpg",
       scale: 1,
+      markScale: 1,
+      baseScale: 0.31,
+      showMakerInput: false,
+      makeName: "",
+      markTop: 0,
+      markLeft: 0,
       mode: "draw", // 默认是标注模式
       startX: 0,
       startY: 0,
@@ -47,7 +90,7 @@ export default {
   },
   mounted() {
     console.log(JSON.parse(this.label));
-    
+    this.label = JSON.parse(this.label);
     this.loadImage();
     window.addEventListener("resize", this.updateCanvasSize); // 监听窗口尺寸变化
   },
@@ -59,11 +102,14 @@ export default {
     loadImage() {
       const img = new Image();
       img.src = this.imageUrl;
-      img.crossOrigin = 'anonymous'; // 或者 use-credentials
+      img.crossOrigin = "anonymous"; // 或者 use-credentials
       img.onload = () => {
         this.img = img;
         this.updateCanvasSize(); // 更新画布大小
         this.drawImage();
+        this.$nextTick(() => {
+          this.drawLabels(); // 绘制标签信息
+        });
       };
     },
     // 更新画布大小
@@ -79,17 +125,57 @@ export default {
       // 计算图片的最大显示尺寸
       if (imgWidth / imgHeight > containerWidth / containerHeight) {
         // 如果图片宽高比大于容器的宽高比，按照容器宽度来缩放
-        this.canvasWidth = containerWidth;
-        this.canvasHeight = (imgHeight / imgWidth) * containerWidth; // 按宽度缩放
         this.scale = containerWidth / imgWidth; // 按宽度缩放
       } else {
         // 如果图片宽高比小于容器的宽高比，按照容器高度来缩放
-        this.canvasHeight = containerHeight;
-        this.canvasWidth = (imgWidth / imgHeight) * containerHeight; // 按高度缩放
         this.scale = containerHeight / imgHeight; // 按高度缩放
       }
-
+      // 以前图片存储数据按照以下比例来的 0.4 0.31 0.25
+      if (this.img.width >= 5000) {
+        this.markScale = 1 - (0.25 - this.scale) / 0.25;
+        this.baseScale = 0.25;
+      } else if (this.img.width >= 4000) {
+        this.markScale = 1 - (0.31 - this.scale) / 0.31;
+        this.baseScale = 0.31;
+      } else if (this.img.width < 4000) {
+        this.markScale = 1 - (0.4 - this.scale) / 0.4;
+        this.baseScale = 0.4;
+      }
+      this.canvasHeight = this.img.height * this.scale; // 按宽度缩放
+      this.canvasWidth = this.img.width * this.scale; // 按宽度缩放
       this.drawImage(); // 更新画布
+      this.$nextTick(() => {
+        this.drawLabels(); // 绘制标签信息
+      });
+    },
+    // 绘制标签信息
+    drawLabels() {
+      const canvas = this.$refs.canvas;
+      const ctx = canvas.getContext("2d");
+      // 绘制每个标签
+      this.label.forEach((label) => {
+        const { text, startX, startY, width, height } = label;
+
+        // 根据缩放比例调整坐标和尺寸
+        const scaledX = startX * this.markScale + this.imagePosition.x;
+        const scaledY = startY * this.markScale + this.imagePosition.y;
+        const scaledWidth = width * this.markScale;
+        const scaledHeight = height * this.markScale;
+
+        // 绘制矩形
+        ctx.beginPath();
+        ctx.rect(scaledX, scaledY, scaledWidth, scaledHeight);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "red";
+        // ctx.fillStyle = "rgba(255, 0, 0, 0.2)";
+        // ctx.fill();
+        ctx.stroke();
+
+        // 绘制文本
+        // ctx.font = "12px Arial";
+        // ctx.fillStyle = "red";
+        // ctx.fillText(`X ${text}`, scaledX, scaledY - 10); // 绘制文本，偏移矩形框
+      });
     },
     // 切换标注或抓手模式
     setMode(mode) {
@@ -114,22 +200,22 @@ export default {
           this.img.width * this.scale,
           this.img.height * this.scale
         );
-
+        // console.log(this.rectangles);
         // 绘制矩形框
-        this.rectangles.forEach((rect) => {
-          ctx.beginPath();
-          ctx.rect(
-            rect.x * this.scale + this.imagePosition.x,
-            rect.y * this.scale + this.imagePosition.y,
-            rect.width * this.scale,
-            rect.height * this.scale
-          );
-          ctx.lineWidth = 2;
-          ctx.strokeStyle = "red";
-          ctx.fillStyle = "rgba(255, 0, 0, 0.2)";
-          ctx.fill();
-          ctx.stroke();
-        });
+        // this.rectangles.forEach((rect) => {
+        //   ctx.beginPath();
+        //   ctx.rect(
+        //     rect.x * this.scale + this.imagePosition.x,
+        //     rect.y * this.scale + this.imagePosition.y,
+        //     rect.width * this.scale,
+        //     rect.height * this.scale
+        //   );
+        //   ctx.lineWidth = 2;
+        //   ctx.strokeStyle = "red";
+        //   // ctx.fillStyle = "rgba(255, 0, 0, 0.2)";
+        //   // ctx.fill();
+        //   ctx.stroke();
+        // });
 
         // 绘制当前正在绘制的矩形框
         if (this.isDrawing) {
@@ -142,8 +228,8 @@ export default {
           );
           ctx.lineWidth = 2;
           ctx.strokeStyle = "red";
-          ctx.fillStyle = "rgba(255, 0, 0, 0.2)";
-          ctx.fill();
+          // ctx.fillStyle = "rgba(255, 0, 0, 0.2)";
+          // ctx.fill();
           ctx.stroke();
         }
       });
@@ -221,6 +307,9 @@ export default {
         );
 
         this.drawImage(); // 实时绘制矩形
+        this.$nextTick(() => {
+          this.drawLabels(); // 绘制标签信息
+        });
       }
 
       // 移动图片
@@ -232,15 +321,62 @@ export default {
         this.startX = offsetX;
         this.startY = offsetY;
         this.drawImage(); // 重新绘制
+        this.$nextTick(() => {
+          this.drawLabels(); // 绘制标签信息
+        });
       }
     },
+    cancelAdd() {
+      this.showMakerInput = false;
+      this.makeName = "";
+    },
+    confirmAdd() {
+      this.showMakerInput = false;
+      let newRect = {
+        text: this.makeName,
+        startX: (this.currentRect.x * this.scale) / this.markScale,
+        startY: (this.currentRect.y * this.scale) / this.markScale,
+        width: (this.currentRect.width * this.scale) / this.markScale,
+        height: (this.currentRect.height * this.scale) / this.markScale,
+      };
+      this.label.push(newRect);
+      console.log(this.rectangles);
+      this.currentRect = {};
+      this.drawImage(); // 重新绘制
+      this.$nextTick(() => {
+        this.drawLabels(); // 绘制标签信息
+        this.makeName = "";
+      });
+    },
     // 完成绘制或移动
-    endAction() {
+    endAction(event) {
+      console.log(this.currentRect);
       if (this.isDrawing) {
+        // 当currentRect的宽高都为0时，说明为点击操作
+        // if (this.currentRect.width === 0 && this.currentRect.height === 0) {
+        //   const canvas = this.$refs.canvas;
+        //   const ctx = canvas.getContext("2d");
+        //   const rect = canvas.getBoundingClientRect();
+        //   const mouseX = event.clientX - rect.left;
+        //   const mouseY = event.clientY - rect.top;
+        //   this.label.forEach((t) => {
+        //     const textWidth = ctx.measureText(t.text).width;
+        //     if (
+        //       mouseX >= t.startX * this.markScale &&
+        //       mouseX <= t.startX * this.markScale + textWidth &&
+        //       mouseY <= t.startY * this.markScale &&
+        //       mouseY >= t.startY * this.markScale - 30
+        //     ) {
+        //       alert(`${t.text} clicked!`);
+        //     }
+        //   });
+        // } else {
+        this.showMakerInput = true;
+        this.markLeft = event.offsetX + 39;
+        this.markTop = event.offsetY;
         this.rectangles.push(this.currentRect); // 保存矩形
-        this.currentRect = {};
+        // }
         this.isDrawing = false;
-        this.drawImage(); // 重新绘制
       }
       if (this.isMoving) {
         this.isMoving = false;
@@ -252,13 +388,23 @@ export default {
       const delta = event.deltaY;
       if (delta < 0) {
         this.scale += 0.05;
+        this.markScale += 0.05 / this.baseScale;
       } else {
         this.scale -= 0.05;
+        this.markScale -= 0.05 / this.baseScale;
       }
-      if (this.scale < 0.1) this.scale = 0.1;
-      if (this.scale > 3) this.scale = 3;
-
+      if (this.scale < 0.1) {
+        this.scale = 0.1;
+        this.markScale = 0.1 / this.baseScale;
+      }
+      if (this.scale > 5) {
+        this.scale = 5;
+        this.markScale = 5 / this.baseScale;
+      }
       this.drawImage(); // 更新缩放后的图像
+      this.$nextTick(() => {
+        this.drawLabels(); // 绘制标签信息
+      });
     },
     // 保存图片
     saveImage() {
@@ -295,6 +441,13 @@ export default {
   position: relative;
   overflow: hidden;
   width: 100%;
-  height: 500px; /* 可以根据需要设置容器的高度 */
+  height: 70vh; /* 可以根据需要设置容器的高度 */
+}
+.tipInfo, .el-tag {
+  position: absolute;
+  z-index: 2;
+}
+.contentBox {
+  display: flex;
 }
 </style>
